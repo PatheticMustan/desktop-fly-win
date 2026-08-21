@@ -1,4 +1,9 @@
 DesktopFly
+DesktopFly.exe
+build/
+.vs/
+*.vcxproj*
+*.sln
 .DS_Store
 *.log
 nohup.out
