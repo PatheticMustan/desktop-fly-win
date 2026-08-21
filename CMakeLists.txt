@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 if(MSVC)
-    add_compile_options(/W4 /EHsc /utf-8 /permissive- /Zc:preprocessor)
+    add_compile_options(/W4 /EHsc /utf-8 /permissive- /Zc:preprocessor /openmp)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 endif()
 
@@ -54,6 +54,7 @@ target_link_libraries(DesktopFly PRIVATE
     user32
     gdi32
     shell32
+    winmm
 )
 
 # Copy data/ and shaders/ directories to output directory

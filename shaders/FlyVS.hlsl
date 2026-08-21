@@ -8,20 +8,20 @@ cbuffer PerFrame : register(b0) {
     float pad1;
 };
 
-cbuffer PerObject : register(b1) {
-    matrix World;
-    float4 DiffuseColor;
-    float4 SpecularColor;
-    float Shininess;
-    float UseTexture;
-    float2 pad2;
-};
-
 struct VS_INPUT {
+    // Per-vertex (Slot 0)
     float3 Position : POSITION;
     float3 Normal : NORMAL;
     float2 TexCoord : TEXCOORD0;
     float4 Color : COLOR0;
+
+    // Per-instance (Slot 1)
+    row_major float4x4 InstanceWorld : INSTANCE_WORLD;
+    float4 InstanceDiffuse : INSTANCE_DIFFUSE;
+    float4 InstanceSpecular : INSTANCE_SPECULAR;
+    float InstanceShininess : INSTANCE_SHININESS;
+    float InstanceUseTexture : INSTANCE_USE_TEXTURE;
+    float2 padInstance : INSTANCE_PAD;
 };
 
 struct PS_INPUT {
@@ -30,15 +30,23 @@ struct PS_INPUT {
     float3 Normal : NORMAL;
     float2 TexCoord : TEXCOORD0;
     float4 Color : COLOR0;
+    float4 DiffuseColor : COLOR1;
+    float4 SpecularColor : COLOR2;
+    float Shininess : TEXCOORD1;
+    float UseTexture : TEXCOORD2;
 };
 
 PS_INPUT main(VS_INPUT input) {
     PS_INPUT output;
-    float4 worldPos = mul(float4(input.Position, 1.0f), World);
+    float4 worldPos = mul(float4(input.Position, 1.0f), input.InstanceWorld);
     output.WorldPos = worldPos.xyz;
     output.Position = mul(worldPos, ViewProj);
-    output.Normal = normalize(mul(input.Normal, (float3x3)World));
+    output.Normal = normalize(mul(input.Normal, (float3x3)input.InstanceWorld));
     output.TexCoord = input.TexCoord;
     output.Color = input.Color;
+    output.DiffuseColor = input.InstanceDiffuse;
+    output.SpecularColor = input.InstanceSpecular;
+    output.Shininess = input.InstanceShininess;
+    output.UseTexture = input.InstanceUseTexture;
     return output;
 }

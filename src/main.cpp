@@ -7,11 +7,14 @@
 #include "Coordinator.hpp"
 #include <windows.h>
 #include <shellapi.h>
+#include <timeapi.h>
 #include <iostream>
 #include <string>
 #include <vector>
 #include <chrono>
 #include <cassert>
+
+#pragma comment(lib, "winmm.lib")
 
 int runSimtest();
 int runBehaviorTest();
@@ -25,9 +28,10 @@ int runSnapshot(const std::string& path);
 #define ID_TRAY_ESCAPE 1005
 #define ID_TRAY_NEXT_DISPLAY 1006
 #define ID_TRAY_ADD_FLY 1007
-#define ID_TRAY_REMOVE_FLY 1008
-#define ID_TRAY_SCARE 1009
-#define ID_TRAY_QUIT 1010
+#define ID_TRAY_ADD_50_FLIES 1008
+#define ID_TRAY_REMOVE_FLY 1009
+#define ID_TRAY_SCARE 1010
+#define ID_TRAY_QUIT 1011
 
 struct MonitorInfo {
     HMONITOR handle;
@@ -123,16 +127,33 @@ public:
     int Run(HINSTANCE hInstance) {
         if (!Init(hInstance)) return 1;
 
-        LARGE_INTEGER freq, lastTime;
+        timeBeginPeriod(1);
+
+        LARGE_INTEGER freq;
         QueryPerformanceFrequency(&freq);
-        QueryPerformanceCounter(&lastTime);
+
+        DEVMODEW dm = {};
+        dm.dmSize = sizeof(dm);
+        int targetFps = 60;
+        if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency >= 30) {
+            targetFps = static_cast<int>(dm.dmDisplayFrequency);
+        }
+        targetFps = std::min(144, targetFps);
+        double targetFrameSeconds = 1.0 / static_cast<double>(targetFps);
+
+        LARGE_INTEGER lastFrameTime;
+        QueryPerformanceCounter(&lastFrameTime);
 
         float mouseTimer = 0.0f;
         float windowTimer = 0.0f;
+        float brainTimer = 0.0f;
         bool lastLButton = false;
 
         MSG msg = {};
         while (running_) {
+            LARGE_INTEGER frameStart;
+            QueryPerformanceCounter(&frameStart);
+
             while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
                 if (msg.message == WM_QUIT) {
                     running_ = false;
@@ -143,10 +164,16 @@ public:
             }
             if (!running_) break;
 
+            if (paused_) {
+                Sleep(20);
+                QueryPerformanceCounter(&lastFrameTime);
+                continue;
+            }
+
             LARGE_INTEGER now;
             QueryPerformanceCounter(&now);
-            float dt = static_cast<float>(now.QuadPart - lastTime.QuadPart) / static_cast<float>(freq.QuadPart);
-            lastTime = now;
+            float dt = static_cast<float>(now.QuadPart - lastFrameTime.QuadPart) / static_cast<float>(freq.QuadPart);
+            lastFrameTime = now;
             dt = std::min(0.05f, std::max(0.0f, dt));
 
             // 30 Hz Mouse & Senses
@@ -209,20 +236,37 @@ public:
             lastLButton = lButtonDown;
 
             // Render Frame
-            if (!paused_) {
-                overlay_.BeginFrame();
-                coordinator_->UpdateAndRender(renderer_, dt);
-                overlay_.EndFrame();
-            }
+            overlay_.BeginFrame();
+            coordinator_->UpdateAndRender(renderer_, dt);
+            overlay_.EndFrame();
 
             if (brainView_ && brainView_->IsVisible()) {
-                brainView_->Update(dt);
-                brainView_->Render();
+                brainTimer += dt;
+                if (brainTimer >= 1.0f / 30.0f) {
+                    brainView_->Update(brainTimer);
+                    brainView_->Render();
+                    brainTimer = 0.0f;
+                }
             }
 
-            Sleep(1);
+            // High-precision frame limiter / pacer
+            LARGE_INTEGER frameEnd;
+            QueryPerformanceCounter(&frameEnd);
+            double elapsedSec = static_cast<double>(frameEnd.QuadPart - frameStart.QuadPart) / static_cast<double>(freq.QuadPart);
+            if (elapsedSec < targetFrameSeconds) {
+                double remainingSec = targetFrameSeconds - elapsedSec;
+                DWORD sleepMs = static_cast<DWORD>(remainingSec * 1000.0);
+                if (sleepMs > 1) {
+                    Sleep(sleepMs - 1);
+                }
+                LARGE_INTEGER current;
+                do {
+                    QueryPerformanceCounter(&current);
+                } while ((static_cast<double>(current.QuadPart - frameStart.QuadPart) / static_cast<double>(freq.QuadPart)) < targetFrameSeconds);
+            }
         }
 
+        timeEndPeriod(1);
         return 0;
     }
 
@@ -243,6 +287,9 @@ public:
             break;
         case ID_TRAY_ADD_FLY:
             coordinator_->AddFly();
+            break;
+        case ID_TRAY_ADD_50_FLIES:
+            coordinator_->AddFlies(50);
             break;
         case ID_TRAY_REMOVE_FLY:
             coordinator_->RemoveFly();
@@ -274,6 +321,7 @@ public:
         }
 
         AppendMenuW(hMenu, MF_STRING, ID_TRAY_ADD_FLY, L"Add Fly");
+        AppendMenuW(hMenu, MF_STRING, ID_TRAY_ADD_50_FLIES, L"Add 50 Flies");
         AppendMenuW(hMenu, MF_STRING, ID_TRAY_REMOVE_FLY, L"Remove Fly");
         AppendMenuW(hMenu, MF_STRING, ID_TRAY_SCARE, L"Scare Flies");
         AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);

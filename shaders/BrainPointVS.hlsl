@@ -5,22 +5,35 @@ cbuffer PerBrainFrame : register(b0) {
 };
 
 struct VS_INPUT {
-    float3 Position : POSITION;
-    float4 Color : COLOR0;
-    float Size : PSIZE;
+    // Slot 0: Billboard Quad vertex
+    float2 QuadPos : POSITION;
+    float2 UV : TEXCOORD0;
+
+    // Slot 1: Per-point instance
+    float3 Center : INSTANCE_POS;
+    float4 Color : INSTANCE_COLOR;
+    float Size : INSTANCE_SIZE;
 };
 
-struct GS_INPUT {
-    float3 Position : POSITION;
+struct PS_INPUT {
+    float4 Position : SV_POSITION;
     float4 Color : COLOR0;
-    float Size : PSIZE;
+    float2 UV : TEXCOORD0;
 };
 
-GS_INPUT main(VS_INPUT input) {
-    GS_INPUT output;
-    float4 worldPos = mul(float4(input.Position, 1.0f), ModelWorld);
-    output.Position = worldPos.xyz;
+PS_INPUT main(VS_INPUT input) {
+    PS_INPUT output;
+    
+    // Transform center to clip space
+    float4 worldPos = mul(float4(input.Center, 1.0f), ModelWorld);
+    float4 clipPos = mul(worldPos, ViewProj);
+
+    // Expand billboard quad in clip space
+    float halfSize = input.Size * 0.5f;
+    clipPos.xy += input.QuadPos * halfSize;
+
+    output.Position = clipPos;
     output.Color = input.Color;
-    output.Size = input.Size;
+    output.UV = input.UV;
     return output;
 }

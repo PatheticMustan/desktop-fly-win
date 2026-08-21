@@ -27,7 +27,7 @@ Leg::Leg(DirectX::XMFLOAT3 attachIn, float baseYawIn, float swingSignIn, float p
       isFront(isFrontIn), femurH(femur), tibiaH(tibia), tarsusH(tarsus)
 {}
 
-void Leg::Render(RendererD3D11& renderer, const DirectX::XMMATRIX& bodyWorld) {
+void Leg::CollectBatches(std::vector<InstanceData>& capsuleBatch, const DirectX::XMMATRIX& bodyWorld) {
     using namespace DirectX;
 
     // Root transform
@@ -38,14 +38,21 @@ void Leg::Render(RendererD3D11& renderer, const DirectX::XMMATRIX& bodyWorld) {
     XMFLOAT4 tarsusColor(0.25f, 0.18f, 0.10f, 1.0f);
     XMFLOAT4 specColor(0.25f, 0.25f, 0.25f, 1.0f);
 
+    InstanceData inst;
+    inst.SpecularColor = specColor;
+    inst.Shininess = 0.25f;
+    inst.UseTexture = 0.0f;
+    inst.pad = XMFLOAT2(0, 0);
+
     // Femur
     XMMATRIX femurScale = XMMatrixScaling(0.48f, femurH * 0.5f, 0.48f);
     XMMATRIX femurOrient = XMMatrixRotationZ(-PI * 0.5f);
     XMMATRIX femurOffset = XMMatrixTranslation(femurH * 0.5f, 0.0f, 0.0f);
     XMMATRIX femurWorld = femurScale * femurOrient * femurOffset * rootWorld;
 
-    renderer.SetObjectConstants(femurWorld, legColor, specColor, 0.25f);
-    renderer.DrawMesh(renderer.capsuleMesh);
+    XMStoreFloat4x4(&inst.World, femurWorld);
+    inst.DiffuseColor = legColor;
+    capsuleBatch.push_back(inst);
 
     // Knee
     XMMATRIX kneeRot = XMMatrixRotationRollPitchYaw(0.0f, 0.75f, -0.30f * swingSign);
@@ -57,8 +64,9 @@ void Leg::Render(RendererD3D11& renderer, const DirectX::XMMATRIX& bodyWorld) {
     XMMATRIX tibiaOffset = XMMatrixTranslation(tibiaH * 0.5f, 0.0f, 0.0f);
     XMMATRIX tibiaWorld = tibiaScale * tibiaOrient * tibiaOffset * kneeWorld;
 
-    renderer.SetObjectConstants(tibiaWorld, legColor, specColor, 0.25f);
-    renderer.DrawMesh(renderer.capsuleMesh);
+    XMStoreFloat4x4(&inst.World, tibiaWorld);
+    inst.DiffuseColor = legColor;
+    capsuleBatch.push_back(inst);
 
     // Ankle
     XMMATRIX ankleRot = XMMatrixRotationRollPitchYaw(0.0f, 0.35f, -0.15f * swingSign);
@@ -70,8 +78,16 @@ void Leg::Render(RendererD3D11& renderer, const DirectX::XMMATRIX& bodyWorld) {
     XMMATRIX tarsusOffset = XMMatrixTranslation(tarsusH * 0.5f, 0.0f, 0.0f);
     XMMATRIX tarsusWorld = tarsusScale * tarsusOrient * tarsusOffset * ankleWorld;
 
-    renderer.SetObjectConstants(tarsusWorld, tarsusColor, specColor, 0.25f);
-    renderer.DrawMesh(renderer.capsuleMesh);
+    XMStoreFloat4x4(&inst.World, tarsusWorld);
+    inst.DiffuseColor = tarsusColor;
+    capsuleBatch.push_back(inst);
+}
+
+void Leg::Render(RendererD3D11& renderer, const DirectX::XMMATRIX& bodyWorld) {
+    std::vector<InstanceData> capsules;
+    capsules.reserve(3);
+    CollectBatches(capsules, bodyWorld);
+    renderer.DrawMeshInstanced(renderer.capsuleMesh, capsules.data(), capsules.size());
 }
 
 Fly::Fly(Point2D p) : pos(p), rng(std::random_device{}()) {
@@ -518,7 +534,7 @@ void Fly::update(float dt, Size2D bounds, std::optional<Point2D> mouse, const st
     syncNode();
 }
 
-void Fly::Render(RendererD3D11& renderer) {
+void Fly::CollectBatches(FlyRenderBatches& batches) {
     using namespace DirectX;
 
     // Body World Matrix
@@ -535,29 +551,53 @@ void Fly::Render(RendererD3D11& renderer) {
     XMFLOAT4 wingColor(0.92f, 0.92f, 0.92f, 0.28f);
     XMFLOAT4 blurColor(0.85f, 0.85f, 0.85f, model.blurWingOpacity);
 
+    XMFLOAT4 specDefault(0.35f, 0.35f, 0.35f, 1.0f);
+    XMFLOAT4 specHigh(0.9f, 0.9f, 0.9f, 1.0f);
+    XMFLOAT4 specLow(0.2f, 0.2f, 0.2f, 1.0f);
+
+    InstanceData inst;
+    inst.pad = XMFLOAT2(0, 0);
+
     // Thorax
     XMMATRIX thoraxW = XMMatrixScaling(4.6f * model.thoraxScale.x, 4.6f * model.thoraxScale.y, 4.6f * model.thoraxScale.z) *
                        XMMatrixTranslation(model.thoraxPos.x, model.thoraxPos.y, model.thoraxPos.z) * bodyWorld;
-    renderer.SetObjectConstants(thoraxW, bodyBrown, XMFLOAT4(0.35f, 0.35f, 0.35f, 1.0f), 0.4f);
-    renderer.DrawMesh(renderer.sphereMesh);
+    XMStoreFloat4x4(&inst.World, thoraxW);
+    inst.DiffuseColor = bodyBrown;
+    inst.SpecularColor = specDefault;
+    inst.Shininess = 0.4f;
+    inst.UseTexture = 0.0f;
+    batches.opaqueSpheres.push_back(inst);
 
     // Abdomen (Procedural striped texture)
     XMMATRIX abdW = XMMatrixScaling(5.0f * model.abdomenScale.x, 5.0f * model.abdomenScale.y, 5.0f * model.abdomenScale.z) *
                     XMMatrixTranslation(model.abdomenPos.x, model.abdomenPos.y, model.abdomenPos.z) * bodyWorld;
-    renderer.DrawAbdomen(renderer.sphereMesh, abdW);
+    XMStoreFloat4x4(&inst.World, abdW);
+    inst.DiffuseColor = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+    inst.SpecularColor = XMFLOAT4(0.3f, 0.3f, 0.3f, 1.0f);
+    inst.Shininess = 0.35f;
+    inst.UseTexture = 1.0f;
+    batches.abdomenSpheres.push_back(inst);
 
     // Head
     XMMATRIX headW = XMMatrixScaling(3.0f * model.headScale.x, 3.0f * model.headScale.y, 3.0f * model.headScale.z) *
                      XMMatrixTranslation(model.headPos.x, model.headPos.y, model.headPos.z) * bodyWorld;
-    renderer.SetObjectConstants(headW, headBrown, XMFLOAT4(0.35f, 0.35f, 0.35f, 1.0f), 0.4f);
-    renderer.DrawMesh(renderer.sphereMesh);
+    XMStoreFloat4x4(&inst.World, headW);
+    inst.DiffuseColor = headBrown;
+    inst.SpecularColor = specDefault;
+    inst.Shininess = 0.4f;
+    inst.UseTexture = 0.0f;
+    batches.opaqueSpheres.push_back(inst);
 
     // Eyes
     for (float side : {-1.0f, 1.0f}) {
         XMMATRIX eyeW = XMMatrixScaling(2.0f * 0.8f, 2.0f * 1.0f, 2.0f * 1.15f) *
                         XMMatrixTranslation(side * 2.1f, 9.7f, 6.4f) * bodyWorld;
-        renderer.SetObjectConstants(eyeW, eyeRed, XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f), 0.9f);
-        renderer.DrawMesh(renderer.sphereMesh);
+        XMStoreFloat4x4(&inst.World, eyeW);
+        inst.DiffuseColor = eyeRed;
+        inst.SpecularColor = specHigh;
+        inst.Shininess = 0.9f;
+        inst.UseTexture = 0.0f;
+        batches.opaqueSpheres.push_back(inst);
     }
 
     // Antennae
@@ -565,20 +605,28 @@ void Fly::Render(RendererD3D11& renderer) {
         XMMATRIX antW = XMMatrixScaling(0.16f, 2.2f * 0.5f, 0.16f) *
                         XMMatrixRotationRollPitchYaw(-1.15f, 0.0f, side * 0.35f) *
                         XMMatrixTranslation(side * 0.9f, 11.6f, 6.3f) * bodyWorld;
-        renderer.SetObjectConstants(antW, antColor, XMFLOAT4(0.2f, 0.2f, 0.2f, 1.0f), 0.2f);
-        renderer.DrawMesh(renderer.capsuleMesh);
+        XMStoreFloat4x4(&inst.World, antW);
+        inst.DiffuseColor = antColor;
+        inst.SpecularColor = specLow;
+        inst.Shininess = 0.2f;
+        inst.UseTexture = 0.0f;
+        batches.opaqueCapsules.push_back(inst);
     }
 
     // Proboscis
     XMMATRIX probW = XMMatrixScaling(0.6f, 2.4f * 0.5f, 0.6f) *
                      XMMatrixRotationRollPitchYaw(-0.5f, 0.0f, 0.0f) *
                      XMMatrixTranslation(0.0f, 10.4f, 4.6f) * bodyWorld;
-    renderer.SetObjectConstants(probW, probColor, XMFLOAT4(0.2f, 0.2f, 0.2f, 1.0f), 0.2f);
-    renderer.DrawMesh(renderer.coneMesh);
+    XMStoreFloat4x4(&inst.World, probW);
+    inst.DiffuseColor = probColor;
+    inst.SpecularColor = specLow;
+    inst.Shininess = 0.2f;
+    inst.UseTexture = 0.0f;
+    batches.opaqueCones.push_back(inst);
 
     // Legs
     for (auto& leg : model.legs) {
-        leg.Render(renderer, bodyWorld);
+        leg.CollectBatches(batches.opaqueCapsules, bodyWorld);
     }
 
     // Folded / Flapping Wings
@@ -587,8 +635,12 @@ void Fly::Render(RendererD3D11& renderer) {
         const auto& rot = (i == 0) ? model.leftWingRot : model.rightWingRot;
         XMMATRIX wingW = XMMatrixRotationRollPitchYaw(rot.x, rot.y, rot.z) *
                          XMMatrixTranslation(side * 1.6f, 0.5f, (side > 0.0f) ? 7.7f : 7.55f) * bodyWorld;
-        renderer.SetObjectConstants(wingW, wingColor, XMFLOAT4(0.9f, 0.9f, 0.9f, 1.0f), 0.9f);
-        renderer.DrawMesh(renderer.wingMesh, true, true);
+        XMStoreFloat4x4(&inst.World, wingW);
+        inst.DiffuseColor = wingColor;
+        inst.SpecularColor = specHigh;
+        inst.Shininess = 0.9f;
+        inst.UseTexture = 0.0f;
+        batches.translucentWings.push_back(inst);
     }
 
     // Motion Blur Wings
@@ -599,8 +651,27 @@ void Fly::Render(RendererD3D11& renderer) {
             XMMATRIX blurW = XMMatrixScaling(5.5f, 2.4f, 0.3f) *
                              XMMatrixRotationRollPitchYaw(rot.x, rot.y, rot.z) *
                              XMMatrixTranslation(side * 6.0f, 1.5f, 8.2f) * bodyWorld;
-            renderer.SetObjectConstants(blurW, blurColor, XMFLOAT4(0.5f, 0.5f, 0.5f, 1.0f), 0.5f);
-            renderer.DrawMesh(renderer.sphereMesh, true, true);
+            XMStoreFloat4x4(&inst.World, blurW);
+            inst.DiffuseColor = blurColor;
+            inst.SpecularColor = XMFLOAT4(0.5f, 0.5f, 0.5f, 1.0f);
+            inst.Shininess = 0.5f;
+            inst.UseTexture = 0.0f;
+            batches.motionBlurWings.push_back(inst);
         }
+    }
+}
+
+void Fly::Render(RendererD3D11& renderer) {
+    FlyRenderBatches batches;
+    batches.ReserveForFlies(1);
+    CollectBatches(batches);
+
+    renderer.DrawMeshInstanced(renderer.sphereMesh, batches.opaqueSpheres.data(), batches.opaqueSpheres.size());
+    renderer.DrawMeshInstanced(renderer.sphereMesh, batches.abdomenSpheres.data(), batches.abdomenSpheres.size(), false, false, true);
+    renderer.DrawMeshInstanced(renderer.capsuleMesh, batches.opaqueCapsules.data(), batches.opaqueCapsules.size());
+    renderer.DrawMeshInstanced(renderer.coneMesh, batches.opaqueCones.data(), batches.opaqueCones.size());
+    renderer.DrawMeshInstanced(renderer.wingMesh, batches.translucentWings.data(), batches.translucentWings.size(), true, true);
+    if (!batches.motionBlurWings.empty()) {
+        renderer.DrawMeshInstanced(renderer.sphereMesh, batches.motionBlurWings.data(), batches.motionBlurWings.size(), true, true);
     }
 }

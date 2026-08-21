@@ -170,22 +170,24 @@ bool BrainView::CreatePipeline(RendererD3D11& renderer) {
 
     // Compile Brain shaders
     std::string vsSrc = ReadShaderFile("BrainPointVS.hlsl");
-    std::string gsSrc = ReadShaderFile("BrainPointGS.hlsl");
     std::string psSrc = ReadShaderFile("BrainPointPS.hlsl");
 
-    ComPtr<ID3DBlob> vsBlob, gsBlob, psBlob, errBlob;
+    ComPtr<ID3DBlob> vsBlob, psBlob, errBlob;
     D3DCompile(vsSrc.data(), vsSrc.size(), "BrainPointVS.hlsl", nullptr, nullptr, "main", "vs_5_0", 0, 0, &vsBlob, &errBlob);
-    D3DCompile(gsSrc.data(), gsSrc.size(), "BrainPointGS.hlsl", nullptr, nullptr, "main", "gs_5_0", 0, 0, &gsBlob, &errBlob);
     D3DCompile(psSrc.data(), psSrc.size(), "BrainPointPS.hlsl", nullptr, nullptr, "main", "ps_5_0", 0, 0, &psBlob, &errBlob);
 
     renderer.GetDevice()->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, &brainVS_);
-    renderer.GetDevice()->CreateGeometryShader(gsBlob->GetBufferPointer(), gsBlob->GetBufferSize(), nullptr, &brainGS_);
     renderer.GetDevice()->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, &brainPS_);
 
     D3D11_INPUT_ELEMENT_DESC layoutDesc[] = {
-        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, offsetof(BrainPointVertex, position), D3D11_INPUT_PER_VERTEX_DATA, 0},
-        {"COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(BrainPointVertex, color),    D3D11_INPUT_PER_VERTEX_DATA, 0},
-        {"PSIZE",    0, DXGI_FORMAT_R32_FLOAT,          0, offsetof(BrainPointVertex, size),     D3D11_INPUT_PER_VERTEX_DATA, 0}
+        // Slot 0: Billboard Quad vertex
+        {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT,          0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,          0, sizeof(float) * 2, D3D11_INPUT_PER_VERTEX_DATA, 0},
+
+        // Slot 1: Per-point instance
+        {"INSTANCE_POS",   0, DXGI_FORMAT_R32G32B32_FLOAT,    1, offsetof(BrainPointVertex, position), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"INSTANCE_COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, offsetof(BrainPointVertex, color),    D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"INSTANCE_SIZE",  0, DXGI_FORMAT_R32_FLOAT,          1, offsetof(BrainPointVertex, size),     D3D11_INPUT_PER_INSTANCE_DATA, 1}
     };
 
     renderer.GetDevice()->CreateInputLayout(layoutDesc, _countof(layoutDesc), vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &inputLayout_);
@@ -201,6 +203,35 @@ bool BrainView::CreatePipeline(RendererD3D11& renderer) {
 }
 
 bool BrainView::CreateBuffers(const BrainData& brainData) {
+    // 0. Billboard quad unit geometry
+    struct BillboardVertex {
+        float x, y;
+        float u, v;
+    };
+    BillboardVertex quadVerts[4] = {
+        { -1.0f,  1.0f, -1.0f,  1.0f },
+        {  1.0f,  1.0f,  1.0f,  1.0f },
+        { -1.0f, -1.0f, -1.0f, -1.0f },
+        {  1.0f, -1.0f,  1.0f, -1.0f }
+    };
+    uint32_t quadIndices[6] = { 0, 1, 2, 1, 3, 2 };
+
+    D3D11_BUFFER_DESC qvbDesc = {};
+    qvbDesc.Usage = D3D11_USAGE_IMMUTABLE;
+    qvbDesc.ByteWidth = sizeof(quadVerts);
+    qvbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA qvbData = {};
+    qvbData.pSysMem = quadVerts;
+    renderer_->GetDevice()->CreateBuffer(&qvbDesc, &qvbData, &quadVB_);
+
+    D3D11_BUFFER_DESC qibDesc = {};
+    qibDesc.Usage = D3D11_USAGE_IMMUTABLE;
+    qibDesc.ByteWidth = sizeof(quadIndices);
+    qibDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA qibData = {};
+    qibData.pSysMem = quadIndices;
+    renderer_->GetDevice()->CreateBuffer(&qibDesc, &qibData, &quadIB_);
+
     // 1. Somas point cloud
     std::vector<BrainPointVertex> somas;
     somas.reserve(brainData.points.points.size());
@@ -256,7 +287,7 @@ bool BrainView::CreateBuffers(const BrainData& brainData) {
 
 void BrainView::Show() {
     isVisible_ = true;
-    ShowWindow(hwnd_, SW_SHOW);
+    ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
 }
 
 void BrainView::Hide() {
@@ -354,27 +385,29 @@ void BrainView::Render() {
         renderer_->GetContext()->Unmap(cbBrainFrame_.Get(), 0);
     }
 
-    UINT stride = sizeof(BrainPointVertex);
-    UINT offset = 0;
+    UINT strides[2] = { sizeof(float) * 4, sizeof(BrainPointVertex) };
+    UINT offsets[2] = { 0, 0 };
 
     renderer_->GetContext()->IASetInputLayout(inputLayout_.Get());
-    renderer_->GetContext()->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+    renderer_->GetContext()->IASetIndexBuffer(quadIB_.Get(), DXGI_FORMAT_R32_UINT, 0);
+    renderer_->GetContext()->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     renderer_->GetContext()->VSSetShader(brainVS_.Get(), nullptr, 0);
     renderer_->GetContext()->VSSetConstantBuffers(0, 1, cbBrainFrame_.GetAddressOf());
 
-    renderer_->GetContext()->GSSetShader(brainGS_.Get(), nullptr, 0);
-    renderer_->GetContext()->GSSetConstantBuffers(0, 1, cbBrainFrame_.GetAddressOf());
+    renderer_->GetContext()->GSSetShader(nullptr, nullptr, 0);
 
     renderer_->GetContext()->PSSetShader(brainPS_.Get(), nullptr, 0);
 
     // Draw Somas
-    renderer_->GetContext()->IASetVertexBuffers(0, 1, somaVB_.GetAddressOf(), &stride, &offset);
-    renderer_->GetContext()->Draw(somaCount_, 0);
+    ID3D11Buffer* somasVBs[2] = { quadVB_.Get(), somaVB_.Get() };
+    renderer_->GetContext()->IASetVertexBuffers(0, 2, somasVBs, strides, offsets);
+    renderer_->GetContext()->DrawIndexedInstanced(6, somaCount_, 0, 0, 0);
 
     // Draw Circuit Neurons
-    renderer_->GetContext()->IASetVertexBuffers(0, 1, circuitVB_.GetAddressOf(), &stride, &offset);
-    renderer_->GetContext()->Draw(circuitCount_, 0);
+    ID3D11Buffer* circuitVBs[2] = { quadVB_.Get(), circuitVB_.Get() };
+    renderer_->GetContext()->IASetVertexBuffers(0, 2, circuitVBs, strides, offsets);
+    renderer_->GetContext()->DrawIndexedInstanced(6, circuitCount_, 0, 0, 0);
 
     // Draw Flashes
     std::vector<BrainPointVertex> activeFlashes;
@@ -392,12 +425,10 @@ void BrainView::Render() {
             memcpy(mapped.pData, activeFlashes.data(), activeFlashes.size() * sizeof(BrainPointVertex));
             renderer_->GetContext()->Unmap(flashVB_.Get(), 0);
         }
-        renderer_->GetContext()->IASetVertexBuffers(0, 1, flashVB_.GetAddressOf(), &stride, &offset);
-        renderer_->GetContext()->Draw(static_cast<UINT>(activeFlashes.size()), 0);
+        ID3D11Buffer* flashVBs[2] = { quadVB_.Get(), flashVB_.Get() };
+        renderer_->GetContext()->IASetVertexBuffers(0, 2, flashVBs, strides, offsets);
+        renderer_->GetContext()->DrawIndexedInstanced(6, static_cast<UINT>(activeFlashes.size()), 0, 0, 0);
     }
-
-    ID3D11GeometryShader* nullGS = nullptr;
-    renderer_->GetContext()->GSSetShader(nullGS, nullptr, 0);
 
     swapChain_->Present(1, 0);
 }
@@ -572,25 +603,27 @@ int BrainView::RunBrainshot(const std::string& path) {
             rndr.GetContext()->Unmap(bv.cbBrainFrame_.Get(), 0);
         }
 
-        UINT stride = sizeof(BrainPointVertex);
-        UINT offset = 0;
+        UINT strides[2] = { sizeof(float) * 4, sizeof(BrainPointVertex) };
+        UINT offsets[2] = { 0, 0 };
 
         rndr.GetContext()->IASetInputLayout(bv.inputLayout_.Get());
-        rndr.GetContext()->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+        rndr.GetContext()->IASetIndexBuffer(bv.quadIB_.Get(), DXGI_FORMAT_R32_UINT, 0);
+        rndr.GetContext()->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         rndr.GetContext()->VSSetShader(bv.brainVS_.Get(), nullptr, 0);
         rndr.GetContext()->VSSetConstantBuffers(0, 1, bv.cbBrainFrame_.GetAddressOf());
 
-        rndr.GetContext()->GSSetShader(bv.brainGS_.Get(), nullptr, 0);
-        rndr.GetContext()->GSSetConstantBuffers(0, 1, bv.cbBrainFrame_.GetAddressOf());
+        rndr.GetContext()->GSSetShader(nullptr, nullptr, 0);
 
         rndr.GetContext()->PSSetShader(bv.brainPS_.Get(), nullptr, 0);
 
-        rndr.GetContext()->IASetVertexBuffers(0, 1, bv.somaVB_.GetAddressOf(), &stride, &offset);
-        rndr.GetContext()->Draw(bv.somaCount_, 0);
+        ID3D11Buffer* somasVBs[2] = { bv.quadVB_.Get(), bv.somaVB_.Get() };
+        rndr.GetContext()->IASetVertexBuffers(0, 2, somasVBs, strides, offsets);
+        rndr.GetContext()->DrawIndexedInstanced(6, bv.somaCount_, 0, 0, 0);
 
-        rndr.GetContext()->IASetVertexBuffers(0, 1, bv.circuitVB_.GetAddressOf(), &stride, &offset);
-        rndr.GetContext()->Draw(bv.circuitCount_, 0);
+        ID3D11Buffer* circuitVBs[2] = { bv.quadVB_.Get(), bv.circuitVB_.Get() };
+        rndr.GetContext()->IASetVertexBuffers(0, 2, circuitVBs, strides, offsets);
+        rndr.GetContext()->DrawIndexedInstanced(6, bv.circuitCount_, 0, 0, 0);
 
         std::vector<BrainPointVertex> activeFlashes;
         for (const auto& f : bv.flashPool_) {
@@ -603,12 +636,10 @@ int BrainView::RunBrainshot(const std::string& path) {
                 memcpy(mapped.pData, activeFlashes.data(), activeFlashes.size() * sizeof(BrainPointVertex));
                 rndr.GetContext()->Unmap(bv.flashVB_.Get(), 0);
             }
-            rndr.GetContext()->IASetVertexBuffers(0, 1, bv.flashVB_.GetAddressOf(), &stride, &offset);
-            rndr.GetContext()->Draw(static_cast<UINT>(activeFlashes.size()), 0);
+            ID3D11Buffer* flashVBs[2] = { bv.quadVB_.Get(), bv.flashVB_.Get() };
+            rndr.GetContext()->IASetVertexBuffers(0, 2, flashVBs, strides, offsets);
+            rndr.GetContext()->DrawIndexedInstanced(6, static_cast<UINT>(activeFlashes.size()), 0, 0, 0);
         }
-
-        ID3D11GeometryShader* nullGS = nullptr;
-        rndr.GetContext()->GSSetShader(nullGS, nullptr, 0);
     }, rgbaData);
 
     if (!ok) {

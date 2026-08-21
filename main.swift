@@ -533,6 +533,13 @@ final class Coordinator: NSObject, SCNSceneRendererDelegate {
     }
 
     func addFly() { enqueue { $0.addFlyNow() } }
+    func addFlies(_ count: Int) {
+        enqueue { c in
+            for _ in 0..<count {
+                c.addFlyNow()
+            }
+        }
+    }
     func removeFly() {
         enqueue { c in
             guard c.flies.count > 1 else { return }   // fly #1 carries the brain
@@ -846,6 +853,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         moveDisplayItem = move
         menu.delegate = self
         menu.addItem(item("Add Fly", #selector(addFly), "a"))
+        menu.addItem(item("Add 50 Flies", #selector(add50Flies), ""))
         menu.addItem(item("Remove Fly", #selector(removeFly), "r"))
         menu.addItem(item("Scare Flies", #selector(scareAll), "s"))
         menu.addItem(.separator())
@@ -865,6 +873,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc func escapeTest() { coordinator.escapeTest() }
     @objc func addFly() { coordinator.addFly() }
+    @objc func add50Flies() { coordinator.addFlies(50) }
     @objc func removeFly() { coordinator.removeFly() }
     @objc func scareAll() { coordinator.scareAll() }
 }

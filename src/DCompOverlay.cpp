@@ -14,6 +14,12 @@ static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
     switch (msg) {
     case WM_NCHITTEST:
         return HTTRANSPARENT;
+    case WM_MOUSEACTIVATE:
+        return MA_NOACTIVATE;
+    case WM_ACTIVATE:
+        return 0;
+    case WM_SETFOCUS:
+        return 0;
     case WM_ERASEBKGND:
         return 1;
     case WM_DESTROY:

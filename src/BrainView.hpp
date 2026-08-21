@@ -70,10 +70,12 @@ private:
     ComPtr<ID3D11Texture2D> depthTex_;
 
     ComPtr<ID3D11VertexShader> brainVS_;
-    ComPtr<ID3D11GeometryShader> brainGS_;
     ComPtr<ID3D11PixelShader> brainPS_;
     ComPtr<ID3D11InputLayout> inputLayout_;
     ComPtr<ID3D11Buffer> cbBrainFrame_;
+
+    ComPtr<ID3D11Buffer> quadVB_;
+    ComPtr<ID3D11Buffer> quadIB_;
 
     ComPtr<ID3D11Buffer> somaVB_;
     UINT somaCount_ = 0;

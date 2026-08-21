@@ -108,10 +108,22 @@ bool RendererD3D11::CreateShaders() {
     if (FAILED(hr)) return false;
 
     D3D11_INPUT_ELEMENT_DESC layoutDesc[] = {
+        // Vertex data (Slot 0)
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, position), D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, normal),   D3D11_INPUT_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,    0, offsetof(Vertex, texCoord), D3D11_INPUT_PER_VERTEX_DATA, 0},
-        {"COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0}
+        {"COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, color), D3D11_INPUT_PER_VERTEX_DATA, 0},
+
+        // Instance data (Slot 1)
+        {"INSTANCE_WORLD", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, static_cast<UINT>(offsetof(InstanceData, World) + 0),  D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"INSTANCE_WORLD", 1, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, static_cast<UINT>(offsetof(InstanceData, World) + 16), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"INSTANCE_WORLD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, static_cast<UINT>(offsetof(InstanceData, World) + 32), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"INSTANCE_WORLD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, static_cast<UINT>(offsetof(InstanceData, World) + 48), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"INSTANCE_DIFFUSE", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, static_cast<UINT>(offsetof(InstanceData, DiffuseColor)), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"INSTANCE_SPECULAR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 1, static_cast<UINT>(offsetof(InstanceData, SpecularColor)), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"INSTANCE_SHININESS", 0, DXGI_FORMAT_R32_FLOAT, 1, static_cast<UINT>(offsetof(InstanceData, Shininess)), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"INSTANCE_USE_TEXTURE", 0, DXGI_FORMAT_R32_FLOAT, 1, static_cast<UINT>(offsetof(InstanceData, UseTexture)), D3D11_INPUT_PER_INSTANCE_DATA, 1},
+        {"INSTANCE_PAD", 0, DXGI_FORMAT_R32G32_FLOAT, 1, static_cast<UINT>(offsetof(InstanceData, pad)), D3D11_INPUT_PER_INSTANCE_DATA, 1}
     };
 
     hr = device_->CreateInputLayout(layoutDesc, _countof(layoutDesc), vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), &inputLayout_);
@@ -126,9 +138,7 @@ bool RendererD3D11::CreateShaders() {
     hr = device_->CreateBuffer(&cbDesc, nullptr, &cbPerFrame_);
     if (FAILED(hr)) return false;
 
-    cbDesc.ByteWidth = sizeof(ConstantBufferPerObject);
-    hr = device_->CreateBuffer(&cbDesc, nullptr, &cbPerObject_);
-    if (FAILED(hr)) return false;
+    EnsureInstanceBufferSize(512);
 
     return true;
 }
@@ -277,57 +287,91 @@ void RendererD3D11::SetFrameConstants(const DirectX::XMMATRIX& viewProj,
     }
 }
 
+bool RendererD3D11::EnsureInstanceBufferSize(size_t requiredCount) {
+    if (instanceBuffer_ && instanceBufferCapacity_ >= requiredCount) {
+        return true;
+    }
+    size_t newCap = std::max<size_t>(requiredCount, instanceBufferCapacity_ == 0 ? 512 : instanceBufferCapacity_ * 2);
+    D3D11_BUFFER_DESC desc = {};
+    desc.Usage = D3D11_USAGE_DYNAMIC;
+    desc.ByteWidth = static_cast<UINT>(sizeof(InstanceData) * newCap);
+    desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+
+    ComPtr<ID3D11Buffer> newBuf;
+    HRESULT hr = device_->CreateBuffer(&desc, nullptr, &newBuf);
+    if (FAILED(hr)) return false;
+
+    instanceBuffer_ = newBuf;
+    instanceBufferCapacity_ = newCap;
+    return true;
+}
+
 void RendererD3D11::SetObjectConstants(const DirectX::XMMATRIX& world,
                                        const DirectX::XMFLOAT4& diffuseColor,
                                        const DirectX::XMFLOAT4& specularColor,
                                        float shininess,
                                        bool useTexture) {
-    D3D11_MAPPED_SUBRESOURCE mapped;
-    if (SUCCEEDED(context_->Map(cbPerObject_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-        auto* cb = static_cast<ConstantBufferPerObject*>(mapped.pData);
-        cb->World = DirectX::XMMatrixTranspose(world);
-        cb->DiffuseColor = diffuseColor;
-        cb->SpecularColor = specularColor;
-        cb->Shininess = shininess;
-        cb->UseTexture = useTexture ? 1.0f : 0.0f;
-        context_->Unmap(cbPerObject_.Get(), 0);
-    }
+    DirectX::XMStoreFloat4x4(&singleInstanceObj_.World, world);
+    singleInstanceObj_.DiffuseColor = diffuseColor;
+    singleInstanceObj_.SpecularColor = specularColor;
+    singleInstanceObj_.Shininess = shininess;
+    singleInstanceObj_.UseTexture = useTexture ? 1.0f : 0.0f;
+    singleInstanceObj_.pad = DirectX::XMFLOAT2(0, 0);
 }
 
 void RendererD3D11::DrawMesh(const MeshBuffer& buffer, bool doubleSided, bool alphaBlend) {
-    UINT stride = sizeof(Vertex);
-    UINT offset = 0;
+    DrawMeshInstanced(buffer, &singleInstanceObj_, 1, doubleSided, alphaBlend, singleInstanceObj_.UseTexture > 0.5f);
+}
+
+void RendererD3D11::DrawMeshInstanced(const MeshBuffer& buffer, const InstanceData* instances, size_t count,
+                                      bool doubleSided, bool alphaBlend, bool useTexture) {
+    if (count == 0 || !instances) return;
+    if (!EnsureInstanceBufferSize(count)) return;
+
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    if (SUCCEEDED(context_->Map(instanceBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        std::memcpy(mapped.pData, instances, sizeof(InstanceData) * count);
+        context_->Unmap(instanceBuffer_.Get(), 0);
+    } else {
+        return;
+    }
+
+    UINT strides[2] = { sizeof(Vertex), sizeof(InstanceData) };
+    UINT offsets[2] = { 0, 0 };
+    ID3D11Buffer* vbs[2] = { buffer.vertexBuffer.Get(), instanceBuffer_.Get() };
 
     context_->IASetInputLayout(inputLayout_.Get());
-    context_->IASetVertexBuffers(0, 1, buffer.vertexBuffer.GetAddressOf(), &stride, &offset);
+    context_->IASetVertexBuffers(0, 2, vbs, strides, offsets);
     context_->IASetIndexBuffer(buffer.indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
     context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     context_->VSSetShader(flyVS_.Get(), nullptr, 0);
     context_->VSSetConstantBuffers(0, 1, cbPerFrame_.GetAddressOf());
-    context_->VSSetConstantBuffers(1, 1, cbPerObject_.GetAddressOf());
 
     context_->PSSetShader(flyPS_.Get(), nullptr, 0);
     context_->PSSetConstantBuffers(0, 1, cbPerFrame_.GetAddressOf());
-    context_->PSSetConstantBuffers(1, 1, cbPerObject_.GetAddressOf());
+
+    if (useTexture) {
+        context_->PSSetShaderResources(0, 1, abdomenSRV_.GetAddressOf());
+        context_->PSSetSamplers(0, 1, linearSampler_.GetAddressOf());
+    }
 
     context_->RSSetState(doubleSided ? rasterCullNone_.Get() : rasterCullBack_.Get());
     context_->OMSetBlendState(alphaBlend ? blendAlpha_.Get() : blendOpaque_.Get(), nullptr, 0xFFFFFFFF);
     context_->OMSetDepthStencilState(depthStateReadWrite_.Get(), 0);
 
-    context_->DrawIndexed(buffer.indexCount, 0, 0);
+    context_->DrawIndexedInstanced(buffer.indexCount, static_cast<UINT>(count), 0, 0, 0);
+
+    if (useTexture) {
+        ID3D11ShaderResourceView* nullSRV = nullptr;
+        context_->PSSetShaderResources(0, 1, &nullSRV);
+    }
 }
 
 void RendererD3D11::DrawAbdomen(const MeshBuffer& buffer, const DirectX::XMMATRIX& world) {
     SetObjectConstants(world, DirectX::XMFLOAT4(1, 1, 1, 1), DirectX::XMFLOAT4(0.3f, 0.3f, 0.3f, 1.0f), 0.35f, true);
-
-    context_->PSSetShaderResources(0, 1, abdomenSRV_.GetAddressOf());
-    context_->PSSetSamplers(0, 1, linearSampler_.GetAddressOf());
-
     DrawMesh(buffer, false, false);
-
-    ID3D11ShaderResourceView* nullSRV = nullptr;
-    context_->PSSetShaderResources(0, 1, &nullSRV);
 }
 
 bool RendererD3D11::RenderOffscreen(int width, int height,

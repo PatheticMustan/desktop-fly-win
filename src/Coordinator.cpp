@@ -1,6 +1,9 @@
 #include "Coordinator.hpp"
 #include <cmath>
 #include <algorithm>
+#if defined(_OPENMP)
+#include <omp.h>
+#endif
 
 Coordinator::Coordinator(Size2D boundsIn, std::shared_ptr<LIFSim> simIn)
     : bounds(boundsIn), sim(std::move(simIn))
@@ -21,13 +24,19 @@ void Coordinator::Enqueue(std::function<void(Coordinator&)> action) {
 }
 
 void Coordinator::AddFly() {
-    Enqueue([](Coordinator& c) {
+    AddFlies(1);
+}
+
+void Coordinator::AddFlies(int count) {
+    Enqueue([count](Coordinator& c) {
         float hw = c.bounds.width * 0.5f - 100.0f;
         float hh = c.bounds.height * 0.5f - 100.0f;
         std::mt19937 rng(std::random_device{}());
         std::uniform_real_distribution<float> dx(-hw, hw);
         std::uniform_real_distribution<float> dy(-hh, hh);
-        c.flies.emplace_back(Point2D{dx(rng), dy(rng)});
+        for (int i = 0; i < count; ++i) {
+            c.flies.emplace_back(Point2D{dx(rng), dy(rng)});
+        }
     });
 }
 
@@ -118,6 +127,58 @@ Point2D Coordinator::GetFlyPosition() {
     return lastFlyPos_;
 }
 
+RECT Coordinator::ComputeFlyRect(const Fly& fly) const {
+    float cx = fly.pos.x + bounds.width * 0.5f;
+    float cy = bounds.height * 0.5f - fly.pos.y;
+    float radius = 110.0f * (fly.currentScale.x / 1.5f);
+
+    RECT r;
+    r.left = std::max(0L, static_cast<LONG>(std::floor(cx - radius)));
+    r.top = std::max(0L, static_cast<LONG>(std::floor(cy - radius)));
+    r.right = std::min(static_cast<LONG>(bounds.width), static_cast<LONG>(std::ceil(cx + radius)));
+    r.bottom = std::min(static_cast<LONG>(bounds.height), static_cast<LONG>(std::ceil(cy + radius)));
+    return r;
+}
+
+std::vector<RECT> Coordinator::GetDirtyRects() {
+    const size_t flyCount = flies.size();
+    if (flyCount == 0) return {};
+
+    if (flyCount > 30) {
+        return { RECT{ 0, 0, static_cast<LONG>(bounds.width), static_cast<LONG>(bounds.height) } };
+    }
+
+    std::vector<RECT> currRects(flyCount);
+    for (size_t i = 0; i < flyCount; ++i) {
+        currRects[i] = ComputeFlyRect(flies[i]);
+    }
+
+    std::vector<RECT> dirty;
+    dirty.reserve(flyCount);
+
+    for (size_t i = 0; i < flyCount; ++i) {
+        RECT r = currRects[i];
+        if (i < prevFlyRects1_.size()) {
+            r.left = std::min(r.left, prevFlyRects1_[i].left);
+            r.top = std::min(r.top, prevFlyRects1_[i].top);
+            r.right = std::max(r.right, prevFlyRects1_[i].right);
+            r.bottom = std::max(r.bottom, prevFlyRects1_[i].bottom);
+        }
+        if (i < prevFlyRects2_.size()) {
+            r.left = std::min(r.left, prevFlyRects2_[i].left);
+            r.top = std::min(r.top, prevFlyRects2_[i].top);
+            r.right = std::max(r.right, prevFlyRects2_[i].right);
+            r.bottom = std::max(r.bottom, prevFlyRects2_[i].bottom);
+        }
+        dirty.push_back(r);
+    }
+
+    prevFlyRects2_ = prevFlyRects1_;
+    prevFlyRects1_ = std::move(currRects);
+
+    return dirty;
+}
+
 Coordinator::LoomSensory Coordinator::ComputeLoom(const Fly& fly, std::optional<Point2D> mouse, float dt) {
     if (!mouse.has_value()) {
         if (loomOverride_ > 0.0f) {
@@ -196,9 +257,27 @@ void Coordinator::UpdateAndRender(RendererD3D11& renderer, float dt) {
         signals = s;
     }
 
-    for (size_t i = 0; i < flies.size(); ++i) {
-        flies[i].terrain = terrain_;
-        flies[i].update(dt, bounds, mouse, (i == 0) ? signals : std::nullopt);
+    const size_t flyCount = flies.size();
+    if (flyCount == 0) return;
+
+    if (flyCount >= 300) {
+#if defined(_OPENMP)
+        #pragma omp parallel for schedule(static)
+        for (intptr_t i = 0; i < static_cast<intptr_t>(flyCount); ++i) {
+            flies[i].terrain = terrain_;
+            flies[i].update(dt, bounds, mouse, (i == 0) ? signals : std::nullopt);
+        }
+#else
+        for (size_t i = 0; i < flyCount; ++i) {
+            flies[i].terrain = terrain_;
+            flies[i].update(dt, bounds, mouse, (i == 0) ? signals : std::nullopt);
+        }
+#endif
+    } else {
+        for (size_t i = 0; i < flyCount; ++i) {
+            flies[i].terrain = terrain_;
+            flies[i].update(dt, bounds, mouse, (i == 0) ? signals : std::nullopt);
+        }
     }
 
     if (!flies.empty()) {
@@ -223,7 +302,19 @@ void Coordinator::UpdateAndRender(RendererD3D11& renderer, float dt) {
 
     renderer.SetFrameConstants(viewProj, lightDir, lightColor, ambientColor, eyePosF3);
 
+    batches_.Clear();
+    batches_.ReserveForFlies(flyCount);
+
     for (auto& fly : flies) {
-        fly.Render(renderer);
+        fly.CollectBatches(batches_);
+    }
+
+    renderer.DrawMeshInstanced(renderer.sphereMesh, batches_.opaqueSpheres.data(), batches_.opaqueSpheres.size());
+    renderer.DrawMeshInstanced(renderer.sphereMesh, batches_.abdomenSpheres.data(), batches_.abdomenSpheres.size(), false, false, true);
+    renderer.DrawMeshInstanced(renderer.capsuleMesh, batches_.opaqueCapsules.data(), batches_.opaqueCapsules.size());
+    renderer.DrawMeshInstanced(renderer.coneMesh, batches_.opaqueCones.data(), batches_.opaqueCones.size());
+    renderer.DrawMeshInstanced(renderer.wingMesh, batches_.translucentWings.data(), batches_.translucentWings.size(), true, true);
+    if (!batches_.motionBlurWings.empty()) {
+        renderer.DrawMeshInstanced(renderer.sphereMesh, batches_.motionBlurWings.data(), batches_.motionBlurWings.size(), true, true);
     }
 }

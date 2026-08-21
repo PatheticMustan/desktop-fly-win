@@ -20,6 +20,7 @@ public:
 
     void Enqueue(std::function<void(Coordinator&)> action);
     void AddFly();
+    void AddFlies(int count);
     void RemoveFly();
     void ScareAll();
     void EscapeTest();
@@ -30,6 +31,7 @@ public:
     void InjectTap(Point2D p);
     void Retarget(Size2D newSize);
     Point2D GetFlyPosition();
+    std::vector<RECT> GetDirtyRects();
 
     void UpdateAndRender(RendererD3D11& renderer, float dt);
 
@@ -51,8 +53,13 @@ private:
     float windowLoomR_ = 0.0f;
     Point2D lastFlyPos_{0, 0};
 
+    std::vector<RECT> prevFlyRects1_;
+    std::vector<RECT> prevFlyRects2_;
+    RECT ComputeFlyRect(const Fly& fly) const;
+
     SignalBuilder signalBuilder_;
     double msAccumulator_ = 0.0;
+    FlyRenderBatches batches_;
 
     struct LoomSensory {
         float l = 0.0f;

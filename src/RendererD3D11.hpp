@@ -22,13 +22,13 @@ struct ConstantBufferPerFrame {
     float pad1;
 };
 
-struct ConstantBufferPerObject {
-    DirectX::XMMATRIX World;
+struct InstanceData {
+    DirectX::XMFLOAT4X4 World;
     DirectX::XMFLOAT4 DiffuseColor;
     DirectX::XMFLOAT4 SpecularColor;
-    float Shininess;
-    float UseTexture;
-    DirectX::XMFLOAT2 pad2;
+    float Shininess = 0.0f;
+    float UseTexture = 0.0f;
+    DirectX::XMFLOAT2 pad{0, 0};
 };
 
 struct MeshBuffer {
@@ -62,6 +62,8 @@ public:
                             bool useTexture = false);
 
     void DrawMesh(const MeshBuffer& buffer, bool doubleSided = false, bool alphaBlend = false);
+    void DrawMeshInstanced(const MeshBuffer& buffer, const InstanceData* instances, size_t count,
+                           bool doubleSided = false, bool alphaBlend = false, bool useTexture = false);
     void DrawAbdomen(const MeshBuffer& buffer, const DirectX::XMMATRIX& world);
 
     // Offscreen render & snapshot
@@ -80,6 +82,7 @@ private:
     bool CreateShaders();
     bool CreateAbdomenTexture();
     bool CreateRenderStates();
+    bool EnsureInstanceBufferSize(size_t requiredCount);
 
     ComPtr<ID3D11Device> device_;
     ComPtr<ID3D11DeviceContext> context_;
@@ -89,7 +92,10 @@ private:
     ComPtr<ID3D11InputLayout> inputLayout_;
 
     ComPtr<ID3D11Buffer> cbPerFrame_;
-    ComPtr<ID3D11Buffer> cbPerObject_;
+    ComPtr<ID3D11Buffer> instanceBuffer_;
+    size_t instanceBufferCapacity_ = 0;
+
+    InstanceData singleInstanceObj_ = {};
 
     ComPtr<ID3D11Texture2D> abdomenTexture_;
     ComPtr<ID3D11ShaderResourceView> abdomenSRV_;
