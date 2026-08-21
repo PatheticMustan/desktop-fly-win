@@ -430,20 +430,29 @@ int runTrayTest() {
 
     // 7. Verify Scare Flies
     app.HandleTrayMenu(nullptr, ID_TRAY_ADD_FLY);
-    coord->UpdateAndRender(app.GetRenderer(), 0.016f);
-    for (auto& f : coord->flies) f.state = Fly::State::Walking;
-    app.HandleTrayMenu(nullptr, ID_TRAY_SCARE);
     for (int i = 0; i < 30; ++i) {
         coord->UpdateAndRender(app.GetRenderer(), 0.016f);
     }
+    for (auto& f : coord->flies) {
+        f.state = Fly::State::Walking;
+        f.scareCooldown = 0.0f;
+    }
+    app.HandleTrayMenu(nullptr, ID_TRAY_SCARE);
+    std::vector<bool> flew(coord->flies.size(), false);
+    for (int i = 0; i < 30; ++i) {
+        coord->UpdateAndRender(app.GetRenderer(), 0.016f);
+        for (size_t k = 0; k < coord->flies.size(); ++k) {
+            if (coord->flies[k].state == Fly::State::Flying) flew[k] = true;
+        }
+    }
     bool allFlying = true;
-    for (const auto& f : coord->flies) {
-        if (f.state != Fly::State::Flying) allFlying = false;
+    for (bool b : flew) {
+        if (!b) allFlying = false;
     }
     if (allFlying) {
         std::cout << "PASS: ID_TRAY_SCARE startled all " << coord->flies.size() << " flies into flight\n";
     } else {
-        std::cerr << "FAIL: ID_TRAY_SCARE failed\n";
+        std::cerr << "FAIL: ID_TRAY_SCARE failed (flew[0]=" << flew[0] << ", flew[1]=" << (flew.size() > 1 ? (flew[1] ? 1 : 0) : -1) << ")\n";
         failures++;
     }
 
@@ -475,7 +484,39 @@ int runTrayTest() {
     return (failures == 0) ? 0 : 1;
 }
 
+static void EnableDpiAwareness() {
+#ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+#define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((DPI_AWARENESS_CONTEXT)-4)
+#endif
+    HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
+    if (hUser32) {
+        typedef BOOL (WINAPI *SetProcessDpiAwarenessContextProc)(DPI_AWARENESS_CONTEXT);
+        auto setContext = (SetProcessDpiAwarenessContextProc)GetProcAddress(hUser32, "SetProcessDpiAwarenessContext");
+        if (setContext && setContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
+            return;
+        }
+    }
+    HMODULE hShcore = LoadLibraryW(L"shcore.dll");
+    if (hShcore) {
+        typedef enum PROCESS_DPI_AWARENESS {
+            PROCESS_DPI_UNAWARE = 0,
+            PROCESS_SYSTEM_DPI_AWARE = 1,
+            PROCESS_PER_MONITOR_DPI_AWARE = 2
+        } PROCESS_DPI_AWARENESS;
+        typedef HRESULT (WINAPI *SetProcessDpiAwarenessProc)(PROCESS_DPI_AWARENESS);
+        auto setDpiAwareness = (SetProcessDpiAwarenessProc)GetProcAddress(hShcore, "SetProcessDpiAwareness");
+        if (setDpiAwareness && SUCCEEDED(setDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE))) {
+            FreeLibrary(hShcore);
+            return;
+        }
+        FreeLibrary(hShcore);
+    }
+    SetProcessDPIAware();
+}
+
 int main(int argc, char* argv[]) {
+    EnableDpiAwareness();
+
     std::vector<std::string> args;
     for (int i = 0; i < argc; ++i) {
         args.emplace_back(argv[i]);

@@ -5,7 +5,7 @@
 <h1 align="center">DesktopFly 🪰</h1>
 
 <p align="center">
-A 3D fruit fly that lives on your macOS desktop — driven by a live spiking
+A 3D fruit fly that lives on your Windows desktop — driven by a live spiking
 simulation of the real <a href="https://codex.flywire.ai">FlyWire</a>
 connectome. It walks across your windows, grooms, sleeps, and decides to flee
 your cursor with the same neurons a real fly uses.
@@ -47,24 +47,32 @@ The body itself is procedural (FlyWire is a brain connectome — no body
 geometry exists), with a tripod gait, visible wing-beat, altitude-scaled
 flight, grooming, and sleep postures.
 
-## Installation
+## Installation & Build
 
-Requirements: **macOS 13+**, Xcode Command Line Tools (Swift 5.9+).
-No permissions or entitlements needed — everything it senses
-(cursor, window frames, clicks-as-taps, thermal state) is permission-free.
+Requirements: **Windows 10 / 11 (64-bit)**, Visual Studio 2022 (MSVC with C++20 support) and CMake (3.20+).
+No special permissions or administrator privileges needed — everything it senses
+(cursor, window frames, clicks-as-taps, power state) is permission-free via standard Win32 APIs.
 
-```sh
-git clone https://github.com/DenisSergeevitch/desktop-fly.git
-cd desktop-fly
-./build.sh
-./DesktopFly
+```cmd
+git clone https://github.com/PatheticMustan/desktop-fly-win.git
+cd desktop-fly-win
+.\build.bat
+.\build\Release\DesktopFly.exe
 ```
 
-A 🪰 item appears in the menu bar; quit from there. The fly wanders your
-desktop on a transparent, click-through overlay — it never intercepts your
+Or build manually using CMake:
+
+```cmd
+cmake -B build -S .
+cmake --build build --config Release
+.\build\Release\DesktopFly.exe
+```
+
+A 🪰 icon appears in the system tray (notification area); right-click it for controls or to quit. The fly wanders your
+desktop on a transparent, click-through DirectComposition overlay — it never intercepts your
 mouse or keyboard.
 
-## Controls (menu bar 🪰)
+## Controls (system tray 🪰)
 
 | item | effect |
 |---|---|
@@ -98,20 +106,20 @@ The loop also closes body→brain: the gait rhythm feeds the circuit's real
 ascending (proprioceptive) neurons in phase with the legs, and fast cursor
 motion stimulates its sensory (wind) partners.
 
-## Desktop ecology (all permission-free macOS senses)
+## Desktop ecology (all permission-free Windows senses)
 
 - **Window terrain**: window top edges are ledges — the fly lands on them,
   walks along them, rides a window you drag, and startles when one closes
-  under its feet.
+  under its feet (`EnumWindows`).
 - **Window looms**: a window appearing near the fly feeds the looming
   pathway; the circuit decides whether to flee your dialogs.
 - **Clicks are substrate taps**; clicking next to the fly startles it through
-  the wind→GF pathway. **Typing is vibration** (idle-time API — knows *when*
-  keys were pressed, never which).
+  the wind→GF pathway. **Typing is vibration** (`GetLastInputInfo` idle-time API — knows *when*
+  input occurred, never what was typed).
 - **Circadian rhythm**: dawn/dusk activity peaks, midday siesta, night
   quiescence. **Sleep**: idle at night → it sleeps, breathing slowly, with
   raised arousal threshold; it grooms after waking.
-- **Temperature**: flies are ectotherms — a hot Mac is a faster fly.
+- **Temperature**: flies are ectotherms — AC power / plugged in gives a boost (`GetSystemPowerStatus`).
 
 ## Regenerating the data
 
@@ -123,16 +131,17 @@ mkdir -p /tmp/flywire && cd /tmp/flywire
 B=https://storage.googleapis.com/flywire-data/codex/data/fafb/783
 curl -O "$B/classification.csv.gz" -O "$B/coordinates.csv.gz" \
      -O "$B/connections.csv.gz" -O "$B/consolidated_cell_types.csv.gz"
-cd - && python3 etl.py /tmp/flywire
+cd - && python etl.py /tmp/flywire
 ```
 
 ## Diagnostics
 
-```sh
-./DesktopFly --simtest        # circuit invariants: GF silent at rest, 4 ms loom latency, ...
-./DesktopFly --behaviortest   # 17 end-to-end checks: stimulate neurons -> body reacts
-./DesktopFly --snapshot f.png  # offscreen fly render
-./DesktopFly --brainshot b.png # offscreen brain render
+```cmd
+.\build\Release\DesktopFly.exe --simtest        # circuit invariants: GF silent at rest, 4 ms loom latency, ...
+.\build\Release\DesktopFly.exe --behaviortest   # 17 end-to-end checks: stimulate neurons -> body reacts
+.\build\Release\DesktopFly.exe --traytest       # system tray menu & multi-monitor toggle checks
+.\build\Release\DesktopFly.exe --snapshot f.png  # offscreen fly render
+.\build\Release\DesktopFly.exe --brainshot b.png # offscreen brain render
 ```
 
 ## What's modeled vs. measured

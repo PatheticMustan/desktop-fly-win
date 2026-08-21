@@ -119,7 +119,14 @@ Point2D Coordinator::GetFlyPosition() {
 }
 
 Coordinator::LoomSensory Coordinator::ComputeLoom(const Fly& fly, std::optional<Point2D> mouse, float dt) {
-    if (!mouse.has_value()) return {0, 0, 0};
+    if (!mouse.has_value()) {
+        if (loomOverride_ > 0.0f) {
+            float l = loomOverride_;
+            float r = loomOverride_;
+            return LoomSensory{l, r, 0.0f};
+        }
+        return {0, 0, 0};
+    }
     Point2D m = *mouse;
 
     if (prevMouse_.has_value() && dt > 0.0f) {

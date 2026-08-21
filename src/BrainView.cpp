@@ -95,6 +95,17 @@ bool BrainView::Initialize(RendererD3D11& renderer, HINSTANCE hInstance, const B
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
     RegisterClassExW(&wc);
 
+    UINT dpi = 96;
+    HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
+    if (hUser32) {
+        typedef UINT (WINAPI *GetDpiForSystemProc)();
+        auto getDpi = (GetDpiForSystemProc)GetProcAddress(hUser32, "GetDpiForSystem");
+        if (getDpi) dpi = getDpi();
+    }
+    float dpiScale = static_cast<float>(dpi) / 96.0f;
+    width_ = static_cast<int>(340.0f * dpiScale);
+    height_ = static_cast<int>(280.0f * dpiScale);
+
     RECT r = {0, 0, width_, height_};
     AdjustWindowRect(&r, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE);
 

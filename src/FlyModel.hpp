@@ -9,7 +9,7 @@
 #include "Geometry.hpp"
 #include "RendererD3D11.hpp"
 
-constexpr float FLY_SCALE = 1.15f;
+constexpr float FLY_SCALE = 1.50f;
 constexpr float EDGE_MARGIN = 50.0f;
 constexpr float SCARE_RADIUS = 110.0f;
 constexpr float NERVOUS_RADIUS = 240.0f;

@@ -6,7 +6,7 @@ import Cocoa
 import SceneKit
 
 let SHADOWS_ENABLED = true
-let FLY_SCALE: CGFloat = 1.15
+let FLY_SCALE: CGFloat = 1.50
 let EDGE_MARGIN: CGFloat = 50
 let SCARE_RADIUS: CGFloat = 110        // legacy behavior (non-connectome flies) only
 let NERVOUS_RADIUS: CGFloat = 240      // legacy behavior only

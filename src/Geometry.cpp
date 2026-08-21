@@ -51,6 +51,7 @@ MeshData Geometry::CreateCapsule(float capRadius, float height, int slices, int 
     MeshData mesh;
     float cylHalfH = std::max(0.0f, (height - 2.0f * capRadius) * 0.5f);
     int totalRings = capStacks * 2 + 2;
+    mesh.vertices.reserve(totalRings * (slices + 1));
 
     for (int i = 0; i <= capStacks; ++i) {
         float v = static_cast<float>(i) / static_cast<float>(capStacks);
